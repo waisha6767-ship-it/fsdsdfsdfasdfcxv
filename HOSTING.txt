@@ -27,25 +27,19 @@ RENDER WEB SERVICE
      APP_ID      = noctua-gta
      REDIS_URL   = rediss://... из Upstash
 5. Persistent Disk НЕ НУЖЕН — забей
-6. Deploy -> URL https://xxxx.onrender.com
-7. URL (без https://) впиши в Loader/key_auth.hpp -> kAuthHost
-   и пересобери Loader
+6. Deploy URL (уже стоит в лоадере):
+     https://fsdsdfsdfasdfcxv.onrender.com
 
 Проверка:
-  curl https://XXXX.onrender.com/health
+  curl https://fsdsdfsdfasdfcxv.onrender.com/health
   должно быть: "redis": true
 
-Создать ключ 30 дней:
-  AuthServer\create_key.cmd https://XXXX.onrender.com ТВОЙ_ADMIN_TOKEN 30 1
+Админ-панель (создать/бан/сброс HWID):
+  https://fsdsdfsdfasdfcxv.onrender.com/admin
+  Вводишь ADMIN_TOKEN → Create / Ban / Reset HWID
 
-  или curl:
-  curl -X POST https://XXXX.onrender.com/v1/admin/create ^
-    -H "Content-Type: application/json" ^
-    -H "X-Admin-Token: ТВОЙ_ADMIN_TOKEN" ^
-    -d "{\"days\":30,\"note\":\"friend1\",\"count\":1}"
-
-Lifetimeный:  "days": 0
-Сброс HWID: POST /v1/admin/reset_hwid  {"key":"ABCD-..."}
+CLI тоже работает:
+  AuthServer\create_key.cmd https://fsdsdfsdfasdfcxv.onrender.com ТВОЙ_ADMIN_TOKEN 30 1
 
 ------------------------------------------------------------
 ЛОКАЛЬНЫЙ ТЕСТ

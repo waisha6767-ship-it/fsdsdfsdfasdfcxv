@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>noctua admin</title>
+  <style>
+    :root {
+      --bg: #101012;
+      --panel: #18181c;
+      --line: #3a3420;
+      --gold: #d0ae48;
+      --gold2: #e8c45a;
+      --text: #ece8dc;
+      --muted: #8a8578;
+      --ok: #5ecf7a;
+      --bad: #e05555;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font: 14px/1.45 "Segoe UI", system-ui, sans-serif;
+      background: radial-gradient(1200px 600px at 10% -10%, #2a2414 0%, var(--bg) 55%);
+      color: var(--text);
+      min-height: 100vh;
+    }
+    .wrap { max-width: 980px; margin: 0 auto; padding: 28px 18px 60px; }
+    h1 { margin: 0 0 4px; font-size: 22px; color: var(--gold); letter-spacing: .04em; }
+    .sub { color: var(--muted); margin-bottom: 22px; }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 16px 18px;
+      margin-bottom: 14px;
+    }
+    label { display: block; color: var(--muted); font-size: 12px; margin: 8px 0 4px; }
+    input, select, button, textarea {
+      font: inherit; border-radius: 6px; border: 1px solid #333;
+      background: #121214; color: var(--text); padding: 9px 11px;
+    }
+    input, select { width: 100%; }
+    .row { display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: 10px; align-items: end; }
+    @media (max-width: 720px) { .row { grid-template-columns: 1fr 1fr; } }
+    button {
+      cursor: pointer; background: #2a2414; border-color: var(--gold);
+      color: var(--gold2); font-weight: 600; white-space: nowrap;
+    }
+    button:hover { background: #3a3018; }
+    button.danger { border-color: var(--bad); color: #ff8e8e; background: #2a1515; }
+    button.ghost { border-color: #444; color: var(--muted); }
+    .status { min-height: 1.2em; color: var(--muted); margin: 8px 0; }
+    .status.ok { color: var(--ok); }
+    .status.err { color: var(--bad); }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid #2a2a30; vertical-align: top; }
+    th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+    code { font-family: Consolas, monospace; color: var(--gold2); }
+    .badge { display: inline-block; padding: 2px 7px; border-radius: 999px; font-size: 11px; }
+    .badge.on { background: #163222; color: var(--ok); }
+    .badge.off { background: #3a1a1a; color: #ff8e8e; }
+    .actions { display: flex; gap: 6px; flex-wrap: wrap; }
+    .login-box { max-width: 420px; margin: 80px auto; }
+    .hidden { display: none !important; }
+    .created { background: #1c1a10; border: 1px dashed var(--line); padding: 10px; border-radius: 8px; margin-top: 10px; }
+    .created code { display: block; margin: 4px 0; user-select: all; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div id="loginView" class="login-box card">
+      <h1>noctua</h1>
+      <div class="sub">admin panel</div>
+      <label>Admin token</label>
+      <input id="tokenInput" type="password" placeholder="ADMIN_TOKEN с Render" autocomplete="off" />
+      <div style="margin-top:12px; display:flex; gap:8px;">
+        <button id="loginBtn">Войти</button>
+      </div>
+      <div id="loginStatus" class="status"></div>
+    </div>
+
+    <div id="appView" class="hidden">
+      <div style="display:flex; justify-content:space-between; align-items:baseline; gap:12px;">
+        <div>
+          <h1>noctua admin</h1>
+          <div class="sub">ключи · Redis</div>
+        </div>
+        <button class="ghost" id="logoutBtn">Выйти</button>
+      </div>
+
+      <div class="card">
+        <div style="font-weight:600; margin-bottom:6px; color:var(--gold);">Создать ключи</div>
+        <div class="row">
+          <div>
+            <label>Дней (0 = forever)</label>
+            <input id="days" type="number" value="30" min="0" />
+          </div>
+          <div>
+            <label>Количество</label>
+            <input id="count" type="number" value="1" min="1" max="50" />
+          </div>
+          <div>
+            <label>Note</label>
+            <input id="note" type="text" placeholder="friend1" />
+          </div>
+          <div>
+            <label>&nbsp;</label>
+            <button id="createBtn">Создать</button>
+          </div>
+        </div>
+        <div id="createStatus" class="status"></div>
+        <div id="createdBox" class="created hidden"></div>
+      </div>
+
+      <div class="card">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <div style="font-weight:600; color:var(--gold);">Ключи</div>
+          <button class="ghost" id="refreshBtn">Обновить</button>
+        </div>
+        <div id="listStatus" class="status"></div>
+        <div style="overflow-x:auto;">
+          <table>
+            <thead>
+              <tr>
+                <th>Key</th>
+                <th>Status</th>
+                <th>HWID</th>
+                <th>Expires</th>
+                <th>Note</th>
+                <th>Uses</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const tokenKey = "noctua_admin_token";
+
+    function token() { return sessionStorage.getItem(tokenKey) || ""; }
+    function setToken(t) { sessionStorage.setItem(tokenKey, t); }
+    function clearToken() { sessionStorage.removeItem(tokenKey); }
+
+    async function api(path, opts = {}) {
+      const headers = Object.assign({ "Content-Type": "application/json" }, opts.headers || {});
+      headers["X-Admin-Token"] = token();
+      const res = await fetch(path, { ...opts, headers });
+      let data = {};
+      try { data = await res.json(); } catch (_) {}
+      return { res, data };
+    }
+
+    function fmtTs(v) {
+      const n = parseInt(v || "0", 10);
+      if (!n) return "—";
+      return new Date(n * 1000).toLocaleString();
+    }
+
+    function expiresLabel(row) {
+      const exp = parseInt(row.expires_at || "0", 10);
+      if (!exp) return "forever";
+      const now = Math.floor(Date.now() / 1000);
+      if (exp < now) return "expired";
+      const days = Math.ceil((exp - now) / 86400);
+      return days + "d · " + fmtTs(exp);
+    }
+
+    function showApp(on) {
+      $("loginView").classList.toggle("hidden", on);
+      $("appView").classList.toggle("hidden", !on);
+    }
+
+    async function login() {
+      const t = $("tokenInput").value.trim();
+      if (!t) { $("loginStatus").textContent = "введи token"; $("loginStatus").className = "status err"; return; }
+      setToken(t);
+      const { res, data } = await api("/v1/admin/list");
+      if (!res.ok || !data.ok) {
+        clearToken();
+        $("loginStatus").textContent = "неверный token или redis";
+        $("loginStatus").className = "status err";
+        return;
+      }
+      showApp(true);
+      renderList(data.keys || []);
+    }
+
+    function renderList(keys) {
+      const tb = $("tbody");
+      tb.innerHTML = "";
+      if (!keys.length) {
+        tb.innerHTML = "<tr><td colspan='7' style='color:var(--muted)'>пусто</td></tr>";
+        return;
+      }
+      for (const row of keys) {
+        const banned = String(row.banned || "0") !== "0";
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td><code>${row.key || ""}</code></td>
+          <td><span class="badge ${banned ? "off" : "on"}">${banned ? "banned" : "active"}</span></td>
+          <td style="max-width:140px; overflow:hidden; text-overflow:ellipsis;">${row.hwid || "—"}</td>
+          <td>${expiresLabel(row)}</td>
+          <td>${row.note || ""}</td>
+          <td>${row.use_count || 0}</td>
+          <td class="actions">
+            <button data-act="copy" data-key="${row.key}">Copy</button>
+            <button data-act="hwid" data-key="${row.key}">Reset HWID</button>
+            <button class="danger" data-act="ban" data-key="${row.key}" ${banned ? "disabled" : ""}>Ban</button>
+          </td>`;
+        tb.appendChild(tr);
+      }
+    }
+
+    async function refresh() {
+      $("listStatus").textContent = "loading...";
+      $("listStatus").className = "status";
+      const { res, data } = await api("/v1/admin/list");
+      if (!res.ok || !data.ok) {
+        $("listStatus").textContent = data.msg || "error";
+        $("listStatus").className = "status err";
+        if (res.status === 401) { clearToken(); showApp(false); }
+        return;
+      }
+      $("listStatus").textContent = (data.keys || []).length + " keys";
+      $("listStatus").className = "status ok";
+      renderList(data.keys || []);
+    }
+
+    async function createKeys() {
+      const days = parseInt($("days").value || "30", 10);
+      const count = parseInt($("count").value || "1", 10);
+      const note = $("note").value || "";
+      $("createStatus").textContent = "creating...";
+      $("createStatus").className = "status";
+      $("createdBox").classList.add("hidden");
+      const { res, data } = await api("/v1/admin/create", {
+        method: "POST",
+        body: JSON.stringify({ days, count, note }),
+      });
+      if (!res.ok || !data.ok) {
+        $("createStatus").textContent = data.msg || "failed";
+        $("createStatus").className = "status err";
+        return;
+      }
+      const keys = data.keys || [];
+      $("createStatus").textContent = "ok: " + keys.length;
+      $("createStatus").className = "status ok";
+      const box = $("createdBox");
+      box.classList.remove("hidden");
+      box.innerHTML = "<div style='color:var(--muted);margin-bottom:6px'>новые ключи (клик = выделить):</div>" +
+        keys.map(k => `<code>${k}</code>`).join("");
+      refresh();
+    }
+
+    $("loginBtn").onclick = login;
+    $("tokenInput").addEventListener("keydown", (e) => { if (e.key === "Enter") login(); });
+    $("logoutBtn").onclick = () => { clearToken(); showApp(false); };
+    $("refreshBtn").onclick = refresh;
+    $("createBtn").onclick = createKeys;
+
+    $("tbody").addEventListener("click", async (e) => {
+      const btn = e.target.closest("button");
+      if (!btn) return;
+      const act = btn.dataset.act;
+      const key = btn.dataset.key;
+      if (act === "copy") {
+        navigator.clipboard.writeText(key);
+        $("listStatus").textContent = "copied";
+        $("listStatus").className = "status ok";
+        return;
+      }
+      if (act === "hwid") {
+        const { res, data } = await api("/v1/admin/reset_hwid", { method: "POST", body: JSON.stringify({ key }) });
+        $("listStatus").textContent = res.ok && data.ok ? "hwid reset" : (data.msg || "fail");
+        $("listStatus").className = res.ok && data.ok ? "status ok" : "status err";
+        refresh();
+      }
+      if (act === "ban") {
+        if (!confirm("Ban " + key + "?")) return;
+        const { res, data } = await api("/v1/admin/revoke", { method: "POST", body: JSON.stringify({ key }) });
+        $("listStatus").textContent = res.ok && data.ok ? "banned" : (data.msg || "fail");
+        $("listStatus").className = res.ok && data.ok ? "status ok" : "status err";
+        refresh();
+      }
+    });
+
+    if (token()) {
+      showApp(true);
+      refresh();
+    }
+  </script>
+</body>
+</html>

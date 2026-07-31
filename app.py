@@ -24,7 +24,7 @@ import time
 from typing import Any, Dict, Optional
 
 import redis
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, render_template, request
 
 APP_NAME = "noctua"
 ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "CHANGE_ME_ADMIN_TOKEN")
@@ -79,6 +79,16 @@ def get_key_row(key):
         return None
     data["key"] = key
     return data
+
+
+@app.get("/")
+def root():
+    return render_template("admin.html")
+
+
+@app.get("/admin")
+def admin_page():
+    return render_template("admin.html")
 
 
 @app.get("/health")

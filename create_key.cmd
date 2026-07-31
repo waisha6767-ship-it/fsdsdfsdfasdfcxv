@@ -1,8 +1,8 @@
 @echo off
 setlocal
 if "%~1"=="" (
-  echo Usage: create_key.cmd https://YOUR.onrender.com ADMIN_TOKEN [days] [count]
-  echo Example: create_key.cmd https://foo.onrender.com MySecret 30 1
+  echo Usage: create_key.cmd https://fsdsdfsdfasdfcxv.onrender.com ADMIN_TOKEN [days] [count]
+  echo Example: create_key.cmd https://fsdsdfsdfasdfcxv.onrender.com MySecret 30 1
   exit /b 1
 )
 set URL=%~1
