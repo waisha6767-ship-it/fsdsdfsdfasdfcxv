@@ -23,8 +23,12 @@ import string
 import time
 from typing import Any, Dict, Optional
 
+from pathlib import Path
+
 import redis
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, Response, jsonify, request
+
+from admin_html import ADMIN_HTML
 
 APP_NAME = "noctua"
 ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "CHANGE_ME_ADMIN_TOKEN")
@@ -33,8 +37,9 @@ REDIS_URL = os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0")
 
 KEY_PREFIX = "noctua:key:"
 KEY_INDEX = "noctua:keys"
+BASE_DIR = Path(__file__).resolve().parent
 
-app = Flask(__name__)
+app = Flask(__name__, template_folder=str(BASE_DIR / "templates"))
 
 _r = None  # type: Optional[redis.Redis]
 
@@ -81,14 +86,19 @@ def get_key_row(key):
     return data
 
 
+def _admin_response():
+    # HTML вшит в admin_html.py — папка templates на GitHub не нужна
+    return Response(ADMIN_HTML, mimetype="text/html; charset=utf-8")
+
+
 @app.get("/")
 def root():
-    return render_template("admin.html")
+    return _admin_response()
 
 
 @app.get("/admin")
 def admin_page():
-    return render_template("admin.html")
+    return _admin_response()
 
 
 @app.get("/health")
