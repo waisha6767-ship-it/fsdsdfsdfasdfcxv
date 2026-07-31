@@ -1,82 +1,93 @@
 #!/usr/bin/env python3
 """
-noctua key auth API
--------------------
+noctua key auth API (Redis)
+---------------------------
 POST /v1/auth          { "key", "hwid", "app" } -> { ok, days_left, msg }
 POST /v1/admin/create  Header X-Admin-Token + { days, note, count }
 POST /v1/admin/revoke  Header X-Admin-Token + { key }
-GET  /v1/admin/list    Header X-Admin-Token
+POST /v1/admin/reset_hwid
+GET  /v1/admin/list
 GET  /health
-"""
 
-from __future__ import annotations
+Env:
+  REDIS_URL     redis://... или rediss://... (Upstash)
+  ADMIN_TOKEN   секрет админки
+  APP_ID        noctua-gta
+"""
 
 import hashlib
 import os
 import re
 import secrets
-import sqlite3
 import string
 import time
-from contextlib import closing
-from pathlib import Path
+from typing import Any, Dict, Optional
 
+import redis
 from flask import Flask, jsonify, request
 
 APP_NAME = "noctua"
-DB_PATH = Path(os.environ.get("KEYS_DB", Path(__file__).with_name("keys.db")))
 ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "CHANGE_ME_ADMIN_TOKEN")
-# опционально: только этот app-id принимает лоадер
 APP_ID = os.environ.get("APP_ID", "noctua-gta")
+REDIS_URL = os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0")
+
+KEY_PREFIX = "noctua:key:"
+KEY_INDEX = "noctua:keys"
 
 app = Flask(__name__)
 
-
-def db() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    return conn
+_r = None  # type: Optional[redis.Redis]
 
 
-def init_db() -> None:
-    with closing(db()) as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS keys (
-                key TEXT PRIMARY KEY,
-                hwid TEXT,
-                created_at INTEGER NOT NULL,
-                expires_at INTEGER NOT NULL,
-                banned INTEGER NOT NULL DEFAULT 0,
-                note TEXT,
-                last_seen INTEGER,
-                use_count INTEGER NOT NULL DEFAULT 0
-            )
-            """
+def r():
+    # type: () -> redis.Redis
+    global _r
+    if _r is None:
+        _r = redis.from_url(
+            REDIS_URL,
+            decode_responses=True,
+            socket_connect_timeout=5,
+            socket_timeout=5,
         )
-        conn.commit()
+    return _r
 
 
-def gen_key() -> str:
+def kname(key):
+    return KEY_PREFIX + key
+
+
+def gen_key():
     alphabet = string.ascii_uppercase + string.digits
     parts = ["".join(secrets.choice(alphabet) for _ in range(4)) for _ in range(4)]
     return "-".join(parts)
 
 
-def normalize_key(k: str) -> str:
+def normalize_key(k):
     k = (k or "").strip().upper().replace(" ", "")
-    k = re.sub(r"[^A-Z0-9\-]", "", k)
-    return k
+    return re.sub(r"[^A-Z0-9\-]", "", k)
 
 
-def require_admin() -> bool:
+def require_admin():
     tok = request.headers.get("X-Admin-Token", "")
-    return tok and secrets.compare_digest(tok, ADMIN_TOKEN)
+    return bool(tok) and secrets.compare_digest(tok, ADMIN_TOKEN)
+
+
+def get_key_row(key):
+    # type: (str) -> Optional[Dict[str, Any]]
+    data = r().hgetall(kname(key))
+    if not data:
+        return None
+    data["key"] = key
+    return data
 
 
 @app.get("/health")
 def health():
-    return jsonify(ok=True, app=APP_NAME, ts=int(time.time()))
+    try:
+        pong = r().ping()
+    except Exception as e:
+        return jsonify(ok=False, redis=False, err=str(e)), 503
+    return jsonify(ok=True, app=APP_NAME, redis=bool(pong), ts=int(time.time()))
 
 
 @app.post("/v1/auth")
@@ -94,42 +105,37 @@ def auth():
         return jsonify(ok=False, msg="bad hwid"), 400
 
     now = int(time.time())
-    with closing(db()) as conn:
-        row = conn.execute("SELECT * FROM keys WHERE key=?", (key,)).fetchone()
-        if not row:
-            return jsonify(ok=False, msg="invalid"), 401
-        if int(row["banned"]) != 0:
-            return jsonify(ok=False, msg="banned"), 403
-        if int(row["expires_at"]) != 0 and int(row["expires_at"]) < now:
-            return jsonify(ok=False, msg="expired"), 403
+    try:
+        row = get_key_row(key)
+    except Exception:
+        return jsonify(ok=False, msg="redis down"), 503
 
-        bound = row["hwid"] or ""
-        if bound and bound != hwid:
-            return jsonify(ok=False, msg="hwid mismatch"), 403
-        if not bound:
-            conn.execute(
-                "UPDATE keys SET hwid=?, last_seen=?, use_count=use_count+1 WHERE key=?",
-                (hwid, now, key),
-            )
-        else:
-            conn.execute(
-                "UPDATE keys SET last_seen=?, use_count=use_count+1 WHERE key=?",
-                (now, key),
-            )
-        conn.commit()
+    if not row:
+        return jsonify(ok=False, msg="invalid"), 401
+    if int(row.get("banned", "0") or 0) != 0:
+        return jsonify(ok=False, msg="banned"), 403
 
-        exp = int(row["expires_at"])
-        days_left = -1 if exp == 0 else max(0, (exp - now) // 86400)
-        # token — на будущее (сессия), сейчас просто подпись ответа
-        nonce = secrets.token_hex(8)
-        sig = hashlib.sha256(f"{key}|{hwid}|{nonce}|{APP_ID}".encode()).hexdigest()[:32]
-        return jsonify(
-            ok=True,
-            days_left=days_left,
-            msg="ok",
-            nonce=nonce,
-            sig=sig,
-        )
+    exp = int(row.get("expires_at", "0") or 0)
+    if exp != 0 and exp < now:
+        return jsonify(ok=False, msg="expired"), 403
+
+    bound = row.get("hwid") or ""
+    if bound and bound != hwid:
+        return jsonify(ok=False, msg="hwid mismatch"), 403
+
+    pipe = r().pipeline()
+    hk = kname(key)
+    if not bound:
+        pipe.hset(hk, mapping={"hwid": hwid, "last_seen": str(now)})
+    else:
+        pipe.hset(hk, "last_seen", str(now))
+    pipe.hincrby(hk, "use_count", 1)
+    pipe.execute()
+
+    days_left = -1 if exp == 0 else max(0, (exp - now) // 86400)
+    nonce = secrets.token_hex(8)
+    sig = hashlib.sha256(f"{key}|{hwid}|{nonce}|{APP_ID}".encode()).hexdigest()[:32]
+    return jsonify(ok=True, days_left=days_left, msg="ok", nonce=nonce, sig=sig)
 
 
 @app.post("/v1/admin/create")
@@ -145,21 +151,33 @@ def admin_create():
     expires = 0 if days <= 0 else now + days * 86400
 
     created = []
-    with closing(db()) as conn:
+    try:
+        rd = r()
         for _ in range(count):
             for _try in range(20):
                 k = gen_key()
-                try:
-                    conn.execute(
-                        "INSERT INTO keys(key, hwid, created_at, expires_at, banned, note, last_seen, use_count)"
-                        " VALUES(?,?,?,?,0,?,NULL,0)",
-                        (k, "", now, expires, note),
-                    )
-                    created.append(k)
-                    break
-                except sqlite3.IntegrityError:
+                hk = kname(k)
+                # NX — не перезаписываем существующий
+                ok = rd.hsetnx(hk, "created_at", str(now))
+                if not ok:
                     continue
-        conn.commit()
+                rd.hset(
+                    hk,
+                    mapping={
+                        "hwid": "",
+                        "expires_at": str(expires),
+                        "banned": "0",
+                        "note": note,
+                        "last_seen": "",
+                        "use_count": "0",
+                    },
+                )
+                rd.sadd(KEY_INDEX, k)
+                created.append(k)
+                break
+    except Exception as e:
+        return jsonify(ok=False, msg=f"redis: {e}"), 503
+
     return jsonify(ok=True, keys=created, days=days, expires_at=expires)
 
 
@@ -169,11 +187,12 @@ def admin_revoke():
         return jsonify(ok=False, msg="unauthorized"), 401
     data = request.get_json(silent=True) or {}
     key = normalize_key(str(data.get("key", "")))
-    with closing(db()) as conn:
-        cur = conn.execute("UPDATE keys SET banned=1 WHERE key=?", (key,))
-        conn.commit()
-        if cur.rowcount == 0:
+    try:
+        if not r().exists(kname(key)):
             return jsonify(ok=False, msg="not found"), 404
+        r().hset(kname(key), "banned", "1")
+    except Exception as e:
+        return jsonify(ok=False, msg=f"redis: {e}"), 503
     return jsonify(ok=True)
 
 
@@ -183,11 +202,12 @@ def admin_reset_hwid():
         return jsonify(ok=False, msg="unauthorized"), 401
     data = request.get_json(silent=True) or {}
     key = normalize_key(str(data.get("key", "")))
-    with closing(db()) as conn:
-        cur = conn.execute("UPDATE keys SET hwid='' WHERE key=?", (key,))
-        conn.commit()
-        if cur.rowcount == 0:
+    try:
+        if not r().exists(kname(key)):
             return jsonify(ok=False, msg="not found"), 404
+        r().hset(kname(key), "hwid", "")
+    except Exception as e:
+        return jsonify(ok=False, msg=f"redis: {e}"), 503
     return jsonify(ok=True)
 
 
@@ -195,17 +215,20 @@ def admin_reset_hwid():
 def admin_list():
     if not require_admin():
         return jsonify(ok=False, msg="unauthorized"), 401
-    with closing(db()) as conn:
-        rows = conn.execute(
-            "SELECT key, hwid, created_at, expires_at, banned, note, last_seen, use_count "
-            "FROM keys ORDER BY created_at DESC LIMIT 500"
-        ).fetchall()
-    return jsonify(ok=True, keys=[dict(r) for r in rows])
+    out = []
+    try:
+        keys = list(r().smembers(KEY_INDEX))
+        keys.sort(reverse=True)
+        for k in keys[:500]:
+            row = get_key_row(k)
+            if row:
+                out.append(row)
+        out.sort(key=lambda x: int(x.get("created_at") or 0), reverse=True)
+    except Exception as e:
+        return jsonify(ok=False, msg=f"redis: {e}"), 503
+    return jsonify(ok=True, keys=out)
 
-
-init_db()
 
 if __name__ == "__main__":
-    # локальный тест: python app.py
     port = int(os.environ.get("PORT", "8080"))
     app.run(host="0.0.0.0", port=port, debug=False)
