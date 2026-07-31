@@ -1,0 +1,120 @@
+============================================================
+  noctua key-server — куда что залить (бесплатно)
+============================================================
+
+СТЕК
+  AuthServer/app.py          -> Flask API ключей
+  AuthServer/requirements.txt
+  AuthServer/Procfile        -> для Render / Railway
+  SQLite keys.db             -> создаётся сам на сервере
+
+------------------------------------------------------------
+ВАРИАНТ A (рекомендую): Render.com  FREE
+------------------------------------------------------------
+1. Зарегай https://render.com
+2. New -> Web Service -> Deploy from Git repository
+   (залей папку AuthServer в GitHub repo, или весь noctua)
+3. Root Directory: AuthServer
+4. Runtime: Python 3
+5. Build Command:  pip install -r requirements.txt
+6. Start Command:  gunicorn -w 1 -b 0.0.0.0:$PORT app:app
+7. Environment:
+     ADMIN_TOKEN = длинный секрет (типа openssl rand -hex 24)
+     APP_ID      = noctua-gta
+     KEYS_DB     = /var/data/keys.db
+8. Disks -> add persistent disk 1GB mount /var/data
+   (иначе на free SQLite сотрётся при рестарте)
+9. Получишь URL вида https://xxxx.onrender.com
+10. Этот URL впиши в Loader/key_auth.hpp  (kAuthHost)
+
+Создать ключ (30 дней):
+  curl -X POST https://XXXX.onrender.com/v1/admin/create ^
+    -H "Content-Type: application/json" ^
+    -H "X-Admin-Token: ТВОЙ_ADMIN_TOKEN" ^
+    -d "{\"days\":30,\"note\":\"friend1\",\"count\":1}"
+
+Lifetimeный ключ (days=0):
+  ... -d "{\"days\":0,\"note\":\"lifetime\",\"count\":1}"
+
+Сбросить HWID:
+  curl -X POST https://XXXX.onrender.com/v1/admin/reset_hwid ^
+    -H "X-Admin-Token: ТВОЙ_ADMIN_TOKEN" ^
+    -H "Content-Type: application/json" ^
+    -d "{\"key\":\"ABCD-...\"}"
+
+------------------------------------------------------------
+ВАРИАНТ B: Railway.app  FREE trial / credits
+------------------------------------------------------------
+1. https://railway.app -> New Project -> Deploy from GitHub
+2. Root: AuthServer
+3. Variables: ADMIN_TOKEN, APP_ID, PORT (авто)
+4. Start: gunicorn -w 1 -b 0.0.0.0:$PORT app:app
+5. Volume привяжи к /data и KEYS_DB=/data/keys.db
+6. URL вида https://xxx.up.railway.app -> в key_auth.hpp
+
+------------------------------------------------------------
+ВАРИАНТ C: PythonAnywhere  FREE
+------------------------------------------------------------
+1. https://www.pythonanywhere.com
+2. Files -> залей app.py + requirements.txt
+3. Bash: pip install --user -r requirements.txt
+4. Web -> Add new web app -> Manual config -> Flask
+5. Source file: /home/USER/AuthServer/app.py
+6. WSGI файл поправить на `from app import app as application`
+7. Environment variables в Web tab
+8. URL: https://USER.pythonanywhere.com
+   ВНИМАНИЕ: free — только свой домен *.pythonanywhere.com,
+   внешние HTTPS клиенты ок. SQLite живёт в home.
+
+------------------------------------------------------------
+ВАРИАНТ D: Oracle Cloud Always Free (VPS)
+------------------------------------------------------------
+1. Создай Ubuntu ARM/AMD Always Free VM
+2. scp -r AuthServer user@ip:~/
+3. sudo apt install python3-pip python3-venv nginx
+4. python3 -m venv venv && . venv/bin/activate
+5. pip install -r requirements.txt
+6. ADMIN_TOKEN=... APP_ID=noctua-gta gunicorn -w 1 -b 127.0.0.1:8080 app:app
+7. nginx reverse-proxy + certbot (Let's Encrypt)
+8. В key_auth.hpp свой домен/IP
+
+------------------------------------------------------------
+ЧТО КУДА
+------------------------------------------------------------
+ХОСТИНГ (сервер):
+  + AuthServer/app.py
+  + AuthServer/requirements.txt
+  + AuthServer/Procfile
+  + env ADMIN_TOKEN / APP_ID / KEYS_DB
+
+НЕ заливать на хостинг:
+  - bin/Release (loader/dll/overlay)
+  - исходники чита (по желанию можно, но не нужно)
+  - ADMIN_TOKEN в git
+
+КЛИЕНТАМ (друзьям):
+  - bin/Release/svchostupd.exe
+  - bin/Release/WinNTAudit.exe
+  - ключ вида ABCD-EFGH-IJKL-MNOP
+  (msc.dll внутри loader, отдельно не нужен)
+
+ЛОКАЛЬНО у тебя:
+  - весь репозиторий noctua
+  - после деплоя поменяй kAuthHost в Loader/key_auth.hpp
+    и пересобери Loader
+
+------------------------------------------------------------
+ЛОКАЛЬНЫЙ ТЕСТ
+------------------------------------------------------------
+  cd AuthServer
+  set ADMIN_TOKEN=testadmin
+  set APP_ID=noctua-gta
+  python app.py
+
+  curl http://127.0.0.1:8080/health
+  curl -X POST http://127.0.0.1:8080/v1/admin/create -H "X-Admin-Token: testadmin" -H "Content-Type: application/json" -d "{\"days\":7,\"count\":1}"
+
+  В key_auth.hpp временно:
+    kAuthHost = L"127.0.0.1"
+    kAuthHttps = false
+    kAuthPort = 8080
